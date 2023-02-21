@@ -1,4 +1,5 @@
-build/**
-in/**
-out/**
-.vscode
+/build/
+/in/
+/out/
+/swap/
+/.vscode/

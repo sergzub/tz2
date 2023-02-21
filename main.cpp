@@ -5,11 +5,13 @@
 #include <iostream>
 #include <filesystem>
 #include <list>
+#include <deque>
 #include <chrono>
 #include <thread>
 #include <random>
 #include <fstream>
-#include <memoty>
+#include <memory>
+#include <cassert>
 
 
 namespace fs = std::filesystem;
@@ -21,9 +23,6 @@ const size_t MaxBlockSize = 4096;
 
 static std::unique_ptr<IAllocator> SwappedAllocator;
 
-using MyUniquePtr = std::unique_ptr<void, TZ2::free>;
-using ThFileMemBlocks = std::list<MyUniquePtr>;
-
 static void JobProc(const std::filesystem::path fn)
 try
 {
@@ -33,7 +32,8 @@ try
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> distrib(1, MaxBlockSize);
 
-    ThFileMemBlocks blocks;
+    using ThAllocatedBlocks = std::deque<BlockAddress>;
+    ThAllocatedBlocks thBlocks;
 
     // Read input file
     std::ifstream is;
@@ -49,20 +49,24 @@ try
         char buf[MaxBlockSize];
         is.read(buf, rndLen);
         const std::streamsize realRdLen = is.gcount();
-        if ( realRdLen == 0)
+        if (realRdLen == 0)
             break;
         
-        ThFileMemBlocks& b = blocks.emplace_back(realRdLen)
-        TZ2::alloc()
-
+        thBlocks.emplace_back(SwappedAllocator->malloc(buf, realRdLen));
     }
-
-    //////////////////////////////////////////////////////////
+    is.close();
 
     // Write output file
-    // std::ifstream os;
-    // os.exceptions(std::ios_base::failbit | std::ios_base::badbit);
-    // os.open( outPath / fn, std::ios::binary | std::ios::out | std::ios::trunc);
+    std::ofstream os;
+    os.exceptions(std::ios_base::failbit | std::ios_base::badbit);
+    os.open( outPath / fn, std::ios::binary | std::ios::out | std::ios::trunc);
+    for(const auto& blk : thBlocks)
+    {
+        char buf[MaxBlockSize];
+        SwappedAllocator->free(blk, buf);
+        os.write(buf, blk.len_);
+    }
+    os.close();
 
     TraceOut() << "Done " << fn;
 }
@@ -85,8 +89,10 @@ try
 
     const int pullSizeMb = std::stol( argv[1] );
     assert( pullSizeMb > 0 );
-    TraceOut() << "Total pull size specified: " << pullSizeMb << " Mb";
-    SwappedAllocator.reset( CreateAllocator( size_t( pullSizeMb ) * 1024 * 1024 ) );
+    // TraceOut() << "Total pull size specified: " << pullSizeMb << " Mb";
+    // SwappedAllocator.reset( CreateAllocator( size_t( pullSizeMb ) * 1024 * 1024 ) );
+    TraceOut() << "Total pull size specified: " << pullSizeMb << " Kb";
+    SwappedAllocator = CreateAllocator( size_t( pullSizeMb ) * 1024 );
 
     Threads jobs;
 

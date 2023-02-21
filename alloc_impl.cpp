@@ -1,16 +1,21 @@
-#pragma once
-
 #include "trace.h"
 #include "alloc_impl.h"
-#include "block.h"
+#include "pull.h"
 
 #include <memory>
+#include <cmath>
+
 
 static_assert(sizeof(size_t) >= 8);
 
 std::unique_ptr<IAllocator> CreateAllocator( size_t pullSizeBytes )
 {
     return std::make_unique<AllocatorImpl>( pullSizeBytes );
+}
+
+static inline int GetPullNumberByLen(int len)
+{
+    return std::log2((( len + 15 )  / 16 ) * 16 ) - 4;
 }
 
 AllocatorImpl::AllocatorImpl( size_t pullSizeBytes )
@@ -31,13 +36,12 @@ AllocatorImpl::~AllocatorImpl()
 {
 }
 
-BlockAddress AllocatorImpl::malloc( int len )
+BlockAddress AllocatorImpl::malloc(const char* src, int len)
 {
-    BlockAddress ba;
-    return ba;
+    return pulls_.at(GetPullNumberByLen(len)).Alloc(src, len );
 }
     
-void AllocatorImpl::free( const BlockAddress& addr )
+void AllocatorImpl::free(const BlockAddress& addr, char* dst)
 {
-    (void)addr;
+    pulls_.at(GetPullNumberByLen(addr.len_)).Free(addr, dst);
 }

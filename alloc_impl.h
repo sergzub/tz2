@@ -1,9 +1,7 @@
 #pragma once
 
 #include "alloc.h"
-#include "block.h"
-
-#include <>
+#include "pull.h"
 
 struct AllocatorImpl : public IAllocator
 {
@@ -11,10 +9,10 @@ struct AllocatorImpl : public IAllocator
     ~AllocatorImpl();
 
     // overrides IAllocator
-    virtual BlockAddress malloc( int len ) final;
-    virtual void free( const BlockAddress& addr ) final;
+    virtual BlockAddress malloc(const char* src, int len) final;
+    virtual void free(const BlockAddress& addr, char* dst) final;
 
     const size_t N_;
 
-    std::vector<SizedPull> pulls_;
+    std::vector<Pull> pulls_;
 };
