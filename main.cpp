@@ -34,9 +34,7 @@ try
     for (; breakBarrier > 0; std::this_thread::sleep_for(std::chrono::seconds(1)))
     {
         if (breakBarrier == 1)
-        {
             --breakBarrier; // показать итоговую статистику и заверишиться
-        }
 
         const auto t  = std::time(nullptr);
         const auto tm = *std::localtime(&t);

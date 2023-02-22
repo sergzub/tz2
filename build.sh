@@ -32,9 +32,6 @@ CreateInputFiles()
     local size="$(( 1500 * ${just1M} ))" 
     local n=3
 
-    # Create spare files -- the reading content will be zeros
-    # For debug purposes these will be enough
-
     for((i=0; i<n; i++)); do
         local fn=''
         fn="$(printf "in_%02d\n" "${i}")"
@@ -61,7 +58,7 @@ Main()
     PrepareDir "${SWAP_DIR}"
 
     # Comment the line below to prevent generating input files
-    # CreateInputFiles
+    CreateInputFiles
 }
 
 Main "$@"
