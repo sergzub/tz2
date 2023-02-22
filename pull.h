@@ -2,8 +2,10 @@
 
 #include "block_addr.h"
 
+#include <memory>
 #include <vector>
 #include <fstream>
+#include <mutex>
 
 
 struct BlockNode
@@ -24,6 +26,7 @@ public:
 
     BlockAddress Alloc(const char* src, int len);
     void Free(const BlockAddress& addr, char* dst);
+    std::string PrintState() const;
 
 private:
     const unsigned blockSize_;
@@ -34,6 +37,7 @@ private:
     BlockIdx availHeadIdx_; // индекс первого свободного блока, если (availHeadIdx_ == -1), то весь пул занят (нет свободных блоков)
     BlockIdx headAllocIdx_; // индекс самого старшего из распределенных блоков, если (headAllocIdx_ == -1), то распределенных блоков нет (весь пул свободен)
     BlockIdx tailAllocIdx_; // индекс самого молодого из распределенных блоков, если (tailAllocIdx_ == -1), то распределенных блоков нет (весь пул свободен)
+    size_t   swapCnt_; // счетчик сброшенных в swap блоков
 
     struct BlockExt
     {
@@ -54,21 +58,25 @@ private:
         return blocksExt_.at(blkIdx).blkId_;
     }
 
-    bool IsEmptyUnsafe() const
+    bool IsEmpty() const
     {
         return availCnt_ == n_;
     }
 
-    bool IsFullUnsafe() const
+    bool IsFull() const
     {
         return availCnt_ == 0;
     }
 
-    BlockIdx SwapAndAllocateUnsafe();
-    BlockIdx AllocateBlockUnsafe();
-    void FreeBlockUnsafe(BlockIdx releasedIdx);
+    BlockIdx SwapAndRelocate();
+    BlockIdx AllocateBlock();
+    void FreeBlock(BlockIdx releasedIdx);
 
     void ReadBlockFromSwap(size_t blkId, char* dst);
-    void WriteBlockToSwap(size_t blkId);
+    void WriteBlockToSwap(BlockIdx blkIdx, size_t blkId);
     std::fstream fSwap;
+
+    std::unique_ptr<std::mutex> mtx_;
+
+    BlockIdx SetHeadAllocIdx(BlockIdx idx);
 };

@@ -5,12 +5,12 @@
 #include <iostream>
 #include <iomanip>
 
-static std::mutex mtx;
-
 template <TraceDirection TD>
 TraceT<TD>::~TraceT()
 try
 {
+    static std::mutex mtx;
+
     auto& os = []() -> std::ostream&
     {
         if constexpr (TD == TraceDirection::STDOUT)

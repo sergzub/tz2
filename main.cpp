@@ -4,7 +4,7 @@
 #include <string>
 #include <iostream>
 #include <filesystem>
-#include <list>
+#include <algorithm>
 #include <deque>
 #include <chrono>
 #include <thread>
@@ -15,13 +15,39 @@
 
 
 namespace fs = std::filesystem;
-using Threads = std::list<std::thread>;
+using Threads = std::vector<std::thread>;
 
 const std::filesystem::path inPath  = "../in";
 const std::filesystem::path outPath = "../out";
 const size_t MaxBlockSize = 4096;
 
 static std::unique_ptr<IAllocator> SwappedAllocator;
+
+static bool breakFlag = false;
+static void PrintStateProc()
+try
+{
+    while(!breakFlag)
+    {
+        const auto t = std::time(nullptr);
+        const auto tm = *std::localtime(&t);
+
+        TraceOut() << "\f"
+            << std::put_time(&tm, "%Y-%m-%d %H:%M:%S")
+            << '\n'
+            << SwappedAllocator->PrintState();
+        
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+}
+catch(const std::exception& ex)
+{
+    TraceErr() << "Exception in PrintStateProc(): " << ex.what();
+}
+catch(...)
+{
+    TraceErr() << "Unknown exception in PrintStateProc()";
+}
 
 static void JobProc(const std::filesystem::path fn)
 try
@@ -45,14 +71,17 @@ try
     }
     while(!is.eof())
     {
+        // std::this_thread::sleep_for(std::chrono::seconds(1));
+
         const std::streamsize rndLen = distrib(gen);
         char buf[MaxBlockSize];
         is.read(buf, rndLen);
         const std::streamsize realRdLen = is.gcount();
         if (realRdLen == 0)
             break;
-        
-        thBlocks.emplace_back(SwappedAllocator->malloc(buf, realRdLen));
+
+        thBlocks.emplace_back(SwappedAllocator->MAlloc(buf, realRdLen));
+        // TraceErr() << "Allocated: " << realRdLen;
     }
     is.close();
 
@@ -62,9 +91,12 @@ try
     os.open( outPath / fn, std::ios::binary | std::ios::out | std::ios::trunc);
     for(const auto& blk : thBlocks)
     {
+        // std::this_thread::sleep_for(std::chrono::seconds(1));
+
         char buf[MaxBlockSize];
-        SwappedAllocator->free(blk, buf);
+        SwappedAllocator->Free(blk, buf);
         os.write(buf, blk.len_);
+        // TraceErr() << "Free: " << blk.len_;
     }
     os.close();
 
@@ -76,7 +108,7 @@ catch(std::exception const& ex)
 }
 catch(...)
 {
-    TraceErr() << "Unknown уxception in thread for file " << fn;
+    TraceErr() << "Unknown exception in thread for file " << fn;
 }
 
 int main(int argc, char *argv[])
@@ -96,15 +128,34 @@ try
 
     Threads jobs;
 
+    std::vector<fs::path> filesToProcess;
     for (auto const& fn : fs::directory_iterator(inPath)->path().filename())
     {
-        jobs.push_back(std::thread(JobProc, fn));
-        break; // create just one thread
+        filesToProcess.push_back(fn);
     }
+
+    // Сортируем файлы по имени
+    std::sort(filesToProcess.begin(), filesToProcess.end());
+
+    jobs.reserve( filesToProcess.size() );
+    for (auto const& fn : filesToProcess)
+    {
+        jobs.push_back(std::thread(JobProc, fn));
+    }
+
+    std::thread prnStateJob;
+    prnStateJob = std::thread(PrintStateProc);
 
     for (auto& j : jobs)
     {
         j.join();
+    }
+
+    breakFlag = true;
+    if (prnStateJob.joinable())
+    {
+        TraceOut() << "Waiting for 'print state thread...'";
+        prnStateJob.join();
     }
 
     return 0;

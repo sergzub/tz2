@@ -3,37 +3,45 @@
 
 #include <cassert>
 #include <cstring>
+#include <thread>
+#include <iomanip>
 
 
 Pull::Pull( unsigned blockSize, size_t n )
     : blockSize_(blockSize)
     , n_(n)
-    , blocks_(n)
-    , availCnt_(n)
-    , availHeadIdx_(0)
+    , blocksExt_(n)
+    , blocks_(blockSize * n)
+    , availCnt_(0)
+    , availHeadIdx_(-1)
     , headAllocIdx_(-1)
     , tailAllocIdx_(-1)
     , idGen_(0)
+    , swapCnt_(0)
+    , mtx_(new std::mutex())
 {
-    blocksExt_.reserve(n);
-    for(size_t i = 0; i < n; ++i)
+    // Подготовить список свободных блоков
+    for(BlockIdx i = 0; i < n-1; ++i)
     {
-        BlockExt blkInfo{ i + 1 };
-        blocksExt_.emplace_back(blkInfo);
+        blocksExt_[i].node_.next_ = i+1;
     }
+    availHeadIdx_ = 0;
+    availCnt_ = n;
 
-    const auto swapFileName = "../swap/swap_" + std::to_string(blockSize);
-    const auto swapFileSize = blockSize * n;
-    TraceOut() << "Prepare swap file " << swapFileName;
+    std::stringstream ss;
+    ss << "../swap/swap_" << std::setw(4) << std::setfill('0') << std::to_string(blockSize);
+    const auto swapFileName = ss.str();
+    TraceOut() << "Prepare swap file '" << swapFileName;
+
     fSwap.exceptions(std::fstream::failbit | std::fstream::badbit);
-    fSwap.open(swapFileName, std::ios::binary | std::ios::in | std::ios::out);
-    fSwap.seekp(swapFileSize - 1);
-    fSwap.write("", 1);
+    fSwap.open(swapFileName, std::ios::binary | std::ios::in | std::ios::out | std::ios::trunc);
 }
 
 BlockAddress Pull::Alloc(const char* src, int len)
 {
-    const BlockIdx blkIdx = AllocateBlockUnsafe();
+    std::lock_guard<std::mutex> lk(*mtx_);
+
+    const BlockIdx blkIdx = AllocateBlock();
     std::memcpy(GetBlockMemoryPos(blkIdx), src, len);
 
     BlockAddress res;
@@ -41,66 +49,83 @@ BlockAddress Pull::Alloc(const char* src, int len)
     res.blkId_  = GetBlockId(blkIdx);
     res.blkIdx_ = blkIdx;
 
+    TraceErr() << "Alloc: pull=" << blockSize_ << ", len=" << len << ", blk=" << blkIdx;
+
     return res;
 }
 
 void Pull::Free(const BlockAddress& addr, char* dst)
 {
+    std::lock_guard<std::mutex> lk(*mtx_);
+
+    TraceErr() << "Free: pull=" << blockSize_ << ", len=" << addr.len_ << ", blk=" << addr.blkIdx_;
+
     const auto releasedId = GetBlockId(addr.blkIdx_);
     if(addr.blkId_ == releasedId)
     {
         std::memcpy(dst, GetBlockMemoryPos(addr.blkIdx_), addr.len_);
+        FreeBlock(addr.blkIdx_);
     }
     else
     {
-        ReadBlockFromSwap(releasedId, dst);
+        ReadBlockFromSwap(addr.blkId_, dst);
     }
-
-    FreeBlockUnsafe(addr.blkIdx_);
 }
 
-BlockIdx Pull::SwapAndAllocateUnsafe()
+std::string Pull::PrintState() const
 {
-    WriteBlockToSwap(headAllocIdx_);
+    std::lock_guard<std::mutex> lk(*mtx_);
 
-    BlockExt& b = blocksExt_[headAllocIdx_];
-    WriteBlockToSwap(b.blkId_);
-    b.blkId_ = idGen_;
-    ++idGen_;
-
-    // Переместить сброшенный в swap блок в LRU-списке из головы в хвост
-    BlockNode& headNode = blocksExt_[headAllocIdx_].node_;
-    BlockNode& tailNode = blocksExt_[tailAllocIdx_].node_;
-    
-    const BlockIdx newHeadIdx = headNode.next_;
-    blocksExt_[newHeadIdx].node_.prev_ = -1;
-    headNode.next_ = -1;
-    headNode.prev_ = tailAllocIdx_;
-    tailAllocIdx_ = headAllocIdx_;
-    
-    const BlockIdx oldHeadIdx = headAllocIdx_;
-    headAllocIdx_ = newHeadIdx;
-    
-    return oldHeadIdx;
+    char buf[4096];
+    static const char fmt[] = "| %4u | %12u | %21lu | %21lu |";
+    const int n = std::snprintf(buf, sizeof(buf), fmt, blockSize_, availCnt_, idGen_, swapCnt_ );
+    return n > 0 ? buf : "<error>";
 }
 
-BlockIdx Pull::AllocateBlockUnsafe()
+BlockIdx Pull::SwapAndRelocate()
 {
-    if(IsFullUnsafe())
+    TraceErr() << "SwapAndRelocate(): headAllocIdx_=" << headAllocIdx_;
+
+    const BlockExt& b = blocksExt_[headAllocIdx_];
+    WriteBlockToSwap(headAllocIdx_, b.blkId_);
+
+    assert(n_ > 1);
+
+    // // Переместить сброшенный в swap блок в LRU-списке аллоцированных блоков из головы в хвост
+    // BlockNode& headNode = blocksExt_[headAllocIdx_].node_;
+    // BlockNode& tailNode = blocksExt_[tailAllocIdx_].node_;
+    
+    // const BlockIdx newHeadIdx = headNode.next_;
+    // blocksExt_[newHeadIdx].node_.prev_ = -1;
+    // headNode.next_ = -1;
+    // headNode.prev_ = tailAllocIdx_;
+    // tailNode.next_ = headAllocIdx_;
+    // tailAllocIdx_ = headAllocIdx_;
+    
+    // const BlockIdx oldHeadIdx = headAllocIdx_;
+    // headAllocIdx_ = SetHeadAllocIdx(newHeadIdx);
+    // return oldHeadIdx;
+
+    FreeBlock(headAllocIdx_);
+    return AllocateBlock();
+}
+
+BlockIdx Pull::AllocateBlock()
+{
+    if(IsFull())
     {
-        return SwapAndAllocateUnsafe();
+        return SwapAndRelocate();
     }
 
-    // Извлекаем блок из цепочки свободных блоков
+    // Извлекаем блок из списка свободных блоков
     const BlockIdx allocatedIdx = availHeadIdx_;
-    availHeadIdx_ = blocksExt_[allocatedIdx].node_.next_;
-    --availCnt_;
+    availHeadIdx_ = blocksExt_[availHeadIdx_].node_.next_;
 
     // И вставляем ее в хвост цепочки распределенных блоков
-    if(IsEmptyUnsafe())
+    if(IsEmpty())
     {
         blocksExt_[allocatedIdx].node_.Clear();
-        headAllocIdx_ = allocatedIdx;
+        headAllocIdx_ = SetHeadAllocIdx(allocatedIdx);
         tailAllocIdx_ = allocatedIdx;
     }
     else
@@ -111,6 +136,8 @@ BlockIdx Pull::AllocateBlockUnsafe()
         tailAllocIdx_ = allocatedIdx;
     }
 
+    --availCnt_;
+
     // Сохраняем ид нового распределенного блока и формируем новый
     blocksExt_[allocatedIdx].blkId_ = idGen_;
     ++idGen_;
@@ -118,42 +145,83 @@ BlockIdx Pull::AllocateBlockUnsafe()
     return allocatedIdx;
 }
 
-void Pull::FreeBlockUnsafe(BlockIdx releasedIdx)
+BlockIdx Pull::SetHeadAllocIdx(BlockIdx idx)
 {
-    assert(!IsEmptyUnsafe());
+    TraceErr() << "SetHeadAllocIdx = " << idx;
+    return idx;
+}
+
+void Pull::FreeBlock(BlockIdx releasedIdx)
+{
+    assert(!IsEmpty());
 
     BlockNode& releasedNode = blocksExt_[releasedIdx].node_;
 
     // Перемещаем блок из списка распределенных блоков в список свободных
-    if(headAllocIdx_ == tailAllocIdx_) // если освобождаем последний блок
+    // if(headAllocIdx_ == tailAllocIdx_) // если освобождаем последний блок
+    // {
+    //     headAllocIdx_ = SetHeadAllocIdx(-1);
+    //     tailAllocIdx_ = -1;
+    // }
+    // else
     {
-        headAllocIdx_ = -1;
-        tailAllocIdx_ = -1;
-    }
-    else
-    {
-        if(releasedIdx != headAllocIdx_) // освобождается не головной элемент
+        // assert( availCnt_ + 1 != n_ );
+
+        if(releasedNode.prev_ != -1)
         {
+            assert(releasedIdx != headAllocIdx_);
+
             BlockNode& prevNode = blocksExt_[releasedNode.prev_].node_;
             prevNode.next_ = releasedNode.next_;
         }
-        else
+        else // это должен быть головной элемент
         {
-            headAllocIdx_ = releasedNode.next_;
+            assert(releasedIdx == headAllocIdx_);
+
+            headAllocIdx_ = SetHeadAllocIdx(releasedNode.next_);
         }
 
-        if(releasedIdx != tailAllocIdx_) // освобождается не хвостовой элемент
+        if(releasedNode.next_ != -1)
         {
+            assert(releasedIdx != tailAllocIdx_);
+
             BlockNode& nextNode = blocksExt_[releasedNode.next_].node_;
             nextNode.prev_ = releasedNode.prev_;
         }
-        else
+        else // это должен быть хвостовой элемент
         {
+            assert(releasedIdx == tailAllocIdx_);
+
             tailAllocIdx_ = releasedNode.prev_;
         }
+
+        // if(releasedIdx == headAllocIdx_) // освобождается головной элемент
+        // {
+        //     BlockNode& nextNode = blocksExt_[releasedNode.next_].node_;
+        //     nextNode.prev_ = releasedNode.prev_;
+        //     headAllocIdx_ = SetHeadAllocIdx(releasedNode.next_);
+        // }
+        // else
+        // {
+        //     BlockNode& prevNode = blocksExt_[releasedNode.prev_].node_;
+        //     prevNode.next_ = releasedNode.next_;
+        // }
+
+        // if(releasedIdx == tailAllocIdx_) // освобождается хвостовой элемент
+        // {
+        //     BlockNode& prevNode = blocksExt_[releasedNode.prev_].node_;
+        //     prevNode.next_ = -1;
+        //     tailAllocIdx_ = releasedNode.prev_;
+        // }
+        // else
+        // {
+        //     BlockNode& nextNode = blocksExt_[releasedNode.next_].node_;
+        //     nextNode.prev_ = releasedNode.prev_;
+        // }
     }
 
     blocksExt_[releasedIdx].blkId_ = -1;
+    // Возвращаем освобожденный блок в список свободных
     releasedNode.prev_ = -1;
     releasedNode.next_ = availHeadIdx_;
     availHeadIdx_ = releasedIdx;
@@ -162,12 +230,17 @@ void Pull::FreeBlockUnsafe(BlockIdx releasedIdx)
 
 void Pull::ReadBlockFromSwap(size_t blkId, char* dst)
 {
+    TraceErr() << "ReadBlockFromSwap(" << blockSize_ << "): " << "blkId=" << blkId;
+
     fSwap.seekp(blkId * blockSize_);
     fSwap.read(dst, blockSize_);
 }
 
-void Pull::WriteBlockToSwap(size_t blkId)
+void Pull::WriteBlockToSwap(BlockIdx blkIdx, size_t blkId)
 {
+    TraceErr() << "WriteBlockToSwap(" << this << "): blockSize_=" << blockSize_ << ", blkIdx=" << blkIdx << ", blkId=" << blkId;
+
     fSwap.seekp(blkId * blockSize_);
-    fSwap.write(GetBlockMemoryPos(blkId), blockSize_);
+    fSwap.write(GetBlockMemoryPos(blkIdx), blockSize_);
+    ++swapCnt_;
 }

@@ -7,7 +7,7 @@ using BlockIdx = std::uint32_t;
 // Структура для предсталвения размера и адреса распределяемого блока
 struct BlockAddress
 {
-    int         len_    = 0;
-    BlockIdx    blkIdx_ = -1;
-    size_t      blkId_  = 0;
+    int         len_    = 0;  // длина области в блоке
+    BlockIdx    blkIdx_ = -1; // номер блока в пуле, который определяется по значению len_
+    size_t      blkId_  = 0;  // уникальный ид распределнного блока, в пределах пула
 };

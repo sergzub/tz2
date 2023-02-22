@@ -37,28 +37,31 @@ CreateInputFiles()
 
     for((i=0; i<n; i++)); do
         local fn=''
-        fn="$(printf "%02d\n" "${i}")"
+        fn="$(printf "in_%02d\n" "${i}")"
         local f="${IN_DIR}/${fn}"
         
         # echo "Creating sparse input file '${f}'"
         # dd of="${f}" bs="${size}" seek=1 count=0 # 2>/dev/null
         
+        # echo "Creating input file '${f}' from /dev/urandom"
+        # dd of="${f}" bs="${size}" if=/dev/urandom count=1
+
         echo "Creating input file '${f}' from /dev/urandom"
-        dd of="${f}" bs="${size}" if=/dev/urandom count=1
+        cat /dev/urandom | base64 | dd of="${f}" bs="${size}" count=1
     done
 }
 
 Main()
 {
     CreateDir "${BUILD_DIR}"
-    cmake -S . -B "${BUILD_DIR}"
+    cmake -S . -B "${BUILD_DIR}" -DCMAKE_BUILD_TYPE=Debug
     cmake --build "${BUILD_DIR}"
 
     PrepareDir "${OUT_DIR}"
     PrepareDir "${SWAP_DIR}"
 
     # Comment the line below to prevent generating input files
-    # CreateInputFiles
+    CreateInputFiles
 }
 
 Main "$@"
