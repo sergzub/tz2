@@ -17,11 +17,12 @@ static int GetPullNumberByLen(int len)
 {
     assert(len >= 1 && len <= 4096);
 
-    int res = 0;
-    if (len > 16)
-        res = std::ceil(std::log2(len)) - 4;
+    static const std::array<int, 9> data = {16,  32,   64,   128, 256,
+                                            512, 1024, 2048, 4096};
 
-    return res;
+    const auto lower = std::lower_bound(data.begin(), data.end(), len);
+
+    return std::distance(data.begin(), lower);
 }
 
 AllocatorImpl::AllocatorImpl(size_t pullSizeBytes)
