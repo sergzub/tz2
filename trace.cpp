@@ -2,8 +2,9 @@
 
 #include <mutex>
 
-#include <iostream>
 #include <iomanip>
+#include <iostream>
+
 
 template <TraceDirection TD>
 TraceT<TD>::~TraceT()
@@ -11,8 +12,7 @@ try
 {
     static std::mutex mtx;
 
-    auto& os = []() -> std::ostream&
-    {
+    auto& os = []() -> std::ostream& {
         if constexpr (TD == TraceDirection::STDOUT)
         {
             return std::cout;
@@ -24,7 +24,7 @@ try
     }();
 
     {
-         std::lock_guard<std::mutex> guard(mtx);
+        std::lock_guard<std::mutex> guard(mtx);
 
         os << m_ss.rdbuf();
         os << '\n';

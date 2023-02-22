@@ -6,7 +6,7 @@
 
 struct FileProcessingStat
 {
-    std::string         fileName_;
-    size_t              fileSize_ = 0;
-    std::atomic_size_t  bytesProcessed_ = 0;
+    std::string fileName_;
+    size_t fileSize_                   = 0;
+    std::atomic_size_t bytesProcessed_ = 0;
 };

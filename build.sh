@@ -27,10 +27,10 @@ CreateInputFiles()
 {
     PrepareDir "${IN_DIR}"
 
-    local just1Mb=1048576
-    # local size="$(( 15 * 1024 * ${just1Mb} / 10 ))" 
-    local size="$(( 100 * 1024 * 1024 ))" 
-    local n=1 # 10
+    local just1M="$(( 1024 * 1024 ))"
+    # local just1G="$(( 1024 * ${just1M} ))"
+    local size="$(( 1500 * ${just1M} ))" 
+    local n=3
 
     # Create spare files -- the reading content will be zeros
     # For debug purposes these will be enough
@@ -40,14 +40,14 @@ CreateInputFiles()
         fn="$(printf "in_%02d\n" "${i}")"
         local f="${IN_DIR}/${fn}"
         
-        echo "Creating sparse input file '${f}'"
-        dd of="${f}" bs="${size}" seek=1 count=0 # 2>/dev/null
+        # echo "Creating sparse input file '${f}'"
+        # dd of="${f}" bs="${size}" seek=1 count=0 # 2>/dev/null
         
         # echo "Creating input file '${f}' from /dev/urandom"
         # dd of="${f}" bs="${size}" if=/dev/urandom count=1
 
-        # echo "Creating input file '${f}' (${size} bytes)"
-        cat /dev/urandom | base64 | head -c "${size}" >  "${f}"
+        echo "Creating input file '${f}' (${size} bytes)..."
+        cat /dev/urandom | base64 | head -c "${size}" > "${f}"
     done
 }
 

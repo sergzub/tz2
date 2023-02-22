@@ -7,7 +7,7 @@
 
 struct AllocatorImpl : public IAllocator
 {
-    AllocatorImpl( size_t pullSizeBytes );
+    AllocatorImpl(size_t pullSizeBytes);
     ~AllocatorImpl();
 
     // overrides IAllocator

@@ -8,9 +8,9 @@
 // Класс интерфейса менеджера памяти
 struct IAllocator
 {
-    virtual BlockAddress MAlloc(const char* src, int len) = 0;
-    virtual void         Free(const BlockAddress& addr, char* dst) = 0;
-    virtual std::string  PrintState() const = 0;
+    virtual BlockAddress MAlloc(const char* src, int len)  = 0;
+    virtual void Free(const BlockAddress& addr, char* dst) = 0;
+    virtual std::string PrintState() const                 = 0;
 };
 
-std::unique_ptr<IAllocator> CreateAllocator( size_t pullSizeBytes );
+std::unique_ptr<IAllocator> CreateAllocator(size_t pullSizeBytes);
