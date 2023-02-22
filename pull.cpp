@@ -77,8 +77,9 @@ std::string Pull::PrintState() const
     std::lock_guard<std::mutex> lk(*mtx_);
 
     char buf[4096];
-    static const char fmt[] = "| %4u | %12u | %21lu | %21lu |";
-    const int n = std::snprintf(buf, sizeof(buf), fmt, blockSize_, availCnt_, idGen_, swapCnt_ );
+    static const char fmt[] = "| %4u | %12u | %12u | %21lu | %21lu |";
+    const int n = std::snprintf(buf, sizeof(buf), fmt,
+        blockSize_, availCnt_, n_ - availCnt_, idGen_, swapCnt_ );
     return n > 0 ? buf : "<error>";
 }
 
@@ -234,6 +235,7 @@ void Pull::ReadBlockFromSwap(size_t blkId, char* dst)
 
     fSwap.seekp(blkId * blockSize_);
     fSwap.read(dst, blockSize_);
+    --swapCnt_;
 }
 
 void Pull::WriteBlockToSwap(BlockIdx blkIdx, size_t blkId)

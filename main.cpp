@@ -1,10 +1,13 @@
 ﻿#include "trace.h"
 #include "alloc.h"
+#include "job_stat.h"
 
 #include <string>
 #include <iostream>
 #include <filesystem>
 #include <algorithm>
+#include <vector>
+#include <list>
 #include <deque>
 #include <chrono>
 #include <thread>
@@ -23,21 +26,37 @@ const size_t MaxBlockSize = 4096;
 
 static std::unique_ptr<IAllocator> SwappedAllocator;
 
-static bool breakFlag = false;
-static void PrintStateProc()
+std::list<FileProcessingStat> JobStats;
+
+static void PrintStateProc(int& breakBarrier)
 try
 {
-    while(!breakFlag)
+    for(; breakBarrier > 0; std::this_thread::sleep_for(std::chrono::seconds(1)))
     {
+        if(breakBarrier == 1)
+        {
+            --breakBarrier;
+            // показать итоговую статистику и заверишиться
+        }
+
         const auto t = std::time(nullptr);
         const auto tm = *std::localtime(&t);
+        TraceOut() << "\f" << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '\n';
 
-        TraceOut() << "\f"
-            << std::put_time(&tm, "%Y-%m-%d %H:%M:%S")
-            << '\n'
-            << SwappedAllocator->PrintState();
-        
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        for( const auto& js : JobStats)
+        {
+            std::string procentStr;
+            if( js.fileSize_ > 0)
+            {
+                char buf[64];
+                if( std::snprintf(buf, sizeof(buf), " (%.2f %%)", 100.0 * js.bytesProcessed_ / js.fileSize_) > 0)
+                    procentStr = buf;
+            }
+
+            TraceOut() << "File " << js.fileName_ << ": " << js.bytesProcessed_ << " / " << js.fileSize_ << procentStr;
+        }
+
+        TraceOut() << '\n' << SwappedAllocator->PrintState();
     }
 }
 catch(const std::exception& ex)
@@ -49,7 +68,7 @@ catch(...)
     TraceErr() << "Unknown exception in PrintStateProc()";
 }
 
-static void JobProc(const std::filesystem::path fn)
+static void JobProc(const std::filesystem::path fn, FileProcessingStat& jobStat)
 try
 {
     TraceOut() << "Thread for processing file " << fn << " has been started";
@@ -63,12 +82,17 @@ try
 
     // Read input file
     std::ifstream is;
-    is.open(inPath / fn, std::ios::binary | std::ios::in);
+    is.open(inPath / fn, std::ios::binary | std::ios::in | std::ios::ate);
     if(!is)
     {
         TraceErr() << "ERROR at open input file " << fn;
         return;
     }
+
+    jobStat.fileName_ = fn;
+    jobStat.fileSize_ = is.tellg();
+    is.seekg(0);
+
     while(!is.eof())
     {
         // std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -81,7 +105,8 @@ try
             break;
 
         thBlocks.emplace_back(SwappedAllocator->MAlloc(buf, realRdLen));
-        // TraceErr() << "Allocated: " << realRdLen;
+
+        jobStat.bytesProcessed_ += realRdLen;
     }
     is.close();
 
@@ -137,21 +162,29 @@ try
     // Сортируем файлы по имени
     std::sort(filesToProcess.begin(), filesToProcess.end());
 
+    {
+        TraceOut() << "Check the settings and press Enter...";
+        std::string dummy;
+        std::getline(std::cin, dummy);
+    }
+
     jobs.reserve( filesToProcess.size() );
     for (auto const& fn : filesToProcess)
     {
-        jobs.push_back(std::thread(JobProc, fn));
+        JobStats.emplace_back();
+        jobs.push_back(std::thread(JobProc, fn, std::ref(JobStats.back())));
     }
 
+    int breakBarrier = 2;
     std::thread prnStateJob;
-    prnStateJob = std::thread(PrintStateProc);
+    prnStateJob = std::thread(PrintStateProc, std::ref(breakBarrier));
 
     for (auto& j : jobs)
     {
         j.join();
     }
 
-    breakFlag = true;
+    breakBarrier = 1;
     if (prnStateJob.joinable())
     {
         TraceOut() << "Waiting for 'print state thread...'";
